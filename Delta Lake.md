@@ -1,0 +1,125 @@
+---
+lab:
+  title: Use Delta Lake in Databricks
+  description: You'll gain hands-on experience working with Delta Lake by creating Delta tables with ACID transaction support, performing updates using the DeltaTable API, and exploring transaction history to access previous versions of data through time-travel capabilities. You'll learn how to optimize Delta table storage and performance using OPTIMIZE and VACUUM commands to reorganize physical layout and clean up old data file versions.
+  duration: 30 minutes
+  level: 300
+  islab: true
+---
+
+# Use Delta Lake in  Databricks
+
+Delta Lake is an open source project to build a transactional data storage layer for Spark on top of a data lake. Delta Lake adds support for relational semantics for both batch and streaming data operations, and enables the creation of a *Lakehouse* architecture in which Apache Spark can be used to process and query data in tables that are based on underlying files in the data lake.
+Keep the Databricks Workspace open.
+
+
+> **Note**: The  Databricks user interface is subject to continual improvement. The user interface may have changed since the instructions in this exercise were written.
+
+## Create a notebook and ingest data
+
+Now let's create a Spark notebook and import the data that we'll work with in this exercise.
+
+1. In the sidebar, use the **(+) New** link to create a **Notebook**.
+
+2. Change the default notebook name (**Untitled Notebook *[date]***) to `Explore Delta Lake` and in the **Connect** drop-down list, select **Serverless** compute if it is not already selected. If the compute is not running, it may take a minute or so to start.
+
+3. In the first cell of the notebook, enter the following code, which creates a volume for storing product data.
+
+     ```sql
+    %sql
+    CREATE VOLUME IF NOT EXISTS product_data_volume
+     ```
+
+4. Use the **&#9656; Run Cell** menu option at the left of the cell to run it. Then wait for the Spark job run by the code to complete.
+
+5. Under the existing code cell, use the **+ Code** icon to add a new code cell. Then in the new cell, enter and run the following Python code.
+
+    ```python
+    import requests
+
+    # Download the CSV file
+    url = "https://raw.githubusercontent.com/MicrosoftLearning/mslearn-databricks/main/data/products.csv"
+    response = requests.get(url)
+    response.raise_for_status()
+
+    # Get the current catalog
+    catalog_name = spark.sql("SELECT current_catalog()").collect()[0][0]
+
+    # Write directly to Unity Catalog volume
+    volume_path = f"/Volumes/{catalog_name}/default/product_data_volume/products.csv"
+    with open(volume_path, "wb") as f:
+        f.write(response.content)
+    ```
+
+    This Python code downloads a CSV file containing product data from a GitHub URL and saves it directly into a Unity Catalog volume in Databricks, using the current catalog context to dynamically construct the storage path.
+
+6. Under the existing code cell, use the **+ Code** icon to add a new code cell. Then in the new cell, enter and run the following code to load the data from the file and view the first 10 rows.
+
+    ```python
+   df = spark.read.load(volume_path, format='csv', header=True)
+   display(df.limit(10))
+    ```
+
+## Load the file data into a delta table and perform an update
+
+The data has been loaded into a dataframe. Let's persist it into a delta table.
+
+1. Add a new code cell and use it to run the following code:
+
+    ```python
+    # Create the table if it does not exist. Otherwise, replace the existing table.
+    df.writeTo("Products").createOrReplace()
+    ```
+
+    The data for a delta lake table is stored in Parquet format. A log file is also created to track modifications made to the data.
+
+1. The file data in Delta format can be loaded into a **DeltaTable** object, which you can use to view and update the data in the table. Run the following code in a new cell to update the data; reducing the price of product 771 by 10%.
+
+    ```python
+    from delta.tables import DeltaTable
+
+    # Reference the Delta table in Unity Catalog
+    deltaTable = DeltaTable.forName(spark, "Products")
+
+    # Perform the update
+    deltaTable.update(
+        condition = "ProductID == 771",
+        set = { "ListPrice": "ListPrice * 0.9" })
+
+    # View the updated data as a dataframe
+    deltaTable.toDF().show(10)
+    ```
+
+    The update is persisted to the data in the delta folder, and will be reflected in any new dataframe loaded from that location.
+
+## Explore logging and *time-travel*
+
+Data modifications are logged, enabling you to use the *time-travel* capabilities of Delta Lake to view previous versions of the data. 
+
+1. In a new code cell, use the following code to view the original version of the product data:
+
+    ```python
+    new_df = spark.read.option("versionAsOf", 0).table("Products")
+    new_df.show(10)
+    ```
+
+1. The log contains a full history of modifications to the data. Use the following code to see a record of the last 10 changes:
+
+    ```python
+   deltaTable.history(10).show(10, False, True)
+    ```
+
+## Optimize table layout
+
+The physical storage of table data and associated index data can be reorganized in order to reduce storage space and improve I/O efficiency when accessing the table. This is particularly useful after substantial insert, update, or delete operations on a table.
+
+1. In a new code cell, use the following code to optimize the layout and clean up old versions of data files in the delta table:
+
+     ```python
+    spark.sql("OPTIMIZE Products")
+    spark.sql("VACUUM Products RETAIN 168 HOURS") # 7 days
+     ```
+
+Delta Lake has a safety check to prevent you from running a dangerous VACUUM command. You can't set a retention period lower than 168 hours in Databricks **Serverless SQL** because it restricts unsafe file deletions to prevent data corruption, and serverless environments don't allow overriding this safety check.
+
+> **Note**: If you run VACUUM on a delta table, you lose the ability to time travel back to a version older than the specified data retention period.
