@@ -1,11 +1,3 @@
----
-lab:
-  title: Upgrade Tables to Unity Catalog
-  description: You learn how to upgrade tables from any Catalog to Unity Catalog using different migration strategies based on your data storage requirements. You practice deep cloning Delta tables, using CTAS for universal table migration, and applying transformations during the upgrade process to restructure data. 
-  duration: 30 minutes
-  prequisites: **Ensure a catalog created with your name **
-  
----
 
 # Upgrade Tables to Unity Catalog
 
